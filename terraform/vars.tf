@@ -13,6 +13,17 @@ variable "app_name" {
   default = "bars"
 }
 
+locals {
+  tags = {
+    Project = var.app_name
+    Environment = var.environment
+  }
+}
+
+variable "app_port" {
+  default = 5050
+}
+
 variable "cidr" {
   description = "The CIDR block for the VPC."
   default     = "10.0.0.0/16"

@@ -5,10 +5,7 @@ resource "aws_alb" "application_load_balancer" {
   subnets            = aws_subnet.public_subnets.*.id
   security_groups    = [aws_security_group.load_balancer_security_group.id]
 
-  tags = {
-    Name        = "${var.app_name}-alb"
-    Environment = var.environment
-  }
+  tags = merge(local.tags, { Name = "${var.app_name}-${var.environment}-alb"})
 }
 resource "aws_security_group" "load_balancer_security_group" {
   vpc_id = aws_vpc.bars_vpc.id
@@ -28,11 +25,10 @@ resource "aws_security_group" "load_balancer_security_group" {
     cidr_blocks      = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
   }
-  tags = {
-    Name        = "${var.app_name}-sg"
-    Environment = var.environment
-  }
+
+  tags = merge(local.tags, { Name = "${var.app_name}-${var.environment}-sg"})
 }
+
 resource "aws_lb_target_group" "target_group" {
   name        = "${var.app_name}-${var.environment}-tg"
   port        = 80
@@ -50,11 +46,9 @@ resource "aws_lb_target_group" "target_group" {
     unhealthy_threshold = "2"
   }
 
-  tags = {
-    Name        = "${var.app_name}-lb-tg"
-    Environment = var.environment
-  }
+  tags = merge(local.tags, { Name = "${var.app_name}-${var.environment}-lb-tg"})
 }
+
 resource "aws_lb_listener" "listener" {
   load_balancer_arn = aws_alb.application_load_balancer.id
   port              = "80"
