@@ -26,6 +26,13 @@ resource "aws_cloudwatch_log_group" "log-group" {
 resource "aws_ecs_task_definition" "aws-ecs-task" {
   family = "${var.app_name}-task"
 
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  memory                   = "512"
+  cpu                      = "256"
+  task_role_arn = aws_iam_role.task_role.arn
+  execution_role_arn = aws_iam_role.main_ecs_tasks.arn
+
   container_definitions = jsonencode([
     {
       name: "${var.app_name}-${var.environment}-container",
@@ -43,19 +50,12 @@ resource "aws_ecs_task_definition" "aws-ecs-task" {
       },
       portMappings = [
         {
-          containerPort = 5050
-          hostPort      = 5050
+          containerPort = var.app_port
+          hostPort      = var.app_port
         }
       ]
     }
   ])
-
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  memory                   = "512"
-  cpu                      = "256"
-  execution_role_arn       = aws_iam_role.ecsTaskExecutionRole.arn
-  task_role_arn            = aws_iam_role.ecsTaskExecutionRole.arn
 
   tags = {
     Name        = "${var.app_name}-ecs-td"
@@ -63,57 +63,25 @@ resource "aws_ecs_task_definition" "aws-ecs-task" {
   }
 }
 
-data "aws_ecs_task_definition" "main" {
+resource "aws_ecs_service" "main" {
+  name            = "${var.app_name}-${var.environment}-service"
+  cluster         = aws_ecs_cluster.aws-ecs-cluster.id
   task_definition = aws_ecs_task_definition.aws-ecs-task.family
-}
-
-resource "aws_iam_role" "ecsTaskExecutionRole" {
-  name               = "${var.app_name}-execution-task-role"
-  assume_role_policy = data.aws_iam_policy_document.assume_role_policy.json
-  tags = {
-    Name        = "${var.app_name}-iam-role"
-    Environment = var.environment
-  }
-}
-
-data "aws_iam_policy_document" "assume_role_policy" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["ecs-tasks.amazonaws.com"]
-    }
-  }
-}
-resource "aws_ecs_service" "aws-ecs-service" {
-  name                 = "${var.app_name}-${var.environment}-ecs-service"
-  cluster              = aws_ecs_cluster.aws-ecs-cluster.id
-  task_definition      = "${aws_ecs_task_definition.aws-ecs-task.family}:${max(aws_ecs_task_definition.aws-ecs-task.revision, data.aws_ecs_task_definition.main.revision)}"
-  launch_type          = "FARGATE"
-  scheduling_strategy  = "REPLICA"
-  desired_count        = 1
-  force_new_deployment = true
+  desired_count   = 1
+  launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = aws_subnet.private_subnets.*.id
-    assign_public_ip = false
-    security_groups = [
-      aws_security_group.service_security_group.id,
-      aws_security_group.load_balancer_security_group.id
-    ]
+    security_groups =[aws_security_group.ecs_tasks.id]
+    subnets         = aws_subnet.private_subnets.*.id
   }
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.target_group.arn
+    target_group_arn = aws_lb_target_group.nlb_tg.arn
     container_name   = "${var.app_name}-${var.environment}-container"
-    container_port   = 5050
+    container_port   = var.app_port
   }
 
-  depends_on = [aws_lb_listener.listener]
-}
-
-resource "aws_iam_role_policy_attachment" "ecsTaskExecutionRole_policy" {
-  role       = aws_iam_role.ecsTaskExecutionRole.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+  depends_on = [
+    aws_ecs_task_definition.aws-ecs-task
+  ]
 }

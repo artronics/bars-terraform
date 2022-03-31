@@ -18,6 +18,6 @@ components:
     debug:
       type: AWS_PROXY
       httpMethod: GET
-      uri: "foo/bar"
+      uri: "${nlb_dns}"
       payloadFormatVersion: "2.0"
       connectionType: INTERNET

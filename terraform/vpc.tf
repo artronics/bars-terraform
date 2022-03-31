@@ -1,70 +1,85 @@
 resource "aws_vpc" "bars_vpc" {
-  cidr_block           = "10.10.0.0/16"
+  cidr_block       = var.cidr
+  enable_dns_support = true
   enable_dns_hostnames = true
-  enable_dns_support   = true
 
-  tags = merge(local.tags, { Name = "${var.app_name}-vpc"})
+  tags = merge(local.tags, {Name = "${var.app_name}-${var.environment}-vpc"})
 }
 
-resource "aws_internet_gateway" "aws_igw" {
-  vpc_id = aws_vpc.bars_vpc.id
+### VPC Network Setup
 
-  tags = merge(local.tags, { Name = "${var.app_name}-igw"})
-}
-
+# Create the private subnets
 resource "aws_subnet" "private_subnets" {
+  count = length(var.private_subnets)
   vpc_id            = aws_vpc.bars_vpc.id
-  count             = length(var.private_subnets)
-  cidr_block        = element(var.private_subnets, count.index)
+  cidr_block = element(var.private_subnets_cidr, count.index)
   availability_zone = element(var.availability_zones, count.index)
 
-  tags = merge(local.tags, { Name = "${var.app_name}-private-subnet-${count.index + 1}"})
+  tags = merge(local.tags, {Name = "${var.app_name}-${var.environment}-private-subnet-${count.index}"})
 }
 
-resource "aws_subnet" "public_subnets" {
-  vpc_id                  = aws_vpc.bars_vpc.id
-  cidr_block              = element(var.public_subnets, count.index)
-  availability_zone       = element(var.availability_zones, count.index)
-  count                   = length(var.public_subnets)
-  map_public_ip_on_launch = true
+### Security Group Setup
 
-  tags = merge(local.tags, { Name = "${var.app_name}-public-subnet-${count.index + 1}"})
-}
-resource "aws_route_table" "public_route_table" {
-  vpc_id = aws_vpc.bars_vpc.id
-
-  tags = merge(local.tags, { Name = "${var.app_name}-routing-table-public" })
-}
-
-resource "aws_route" "aws_route" {
-  route_table_id         = aws_route_table.public_route_table.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.aws_igw.id
-}
-
-resource "aws_route_table_association" "public_route_association" {
-  count          = length(var.public_subnets)
-  subnet_id      = element(aws_subnet.public_subnets.*.id, count.index)
-  route_table_id = aws_route_table.public_route_table.id
-}
-
-resource "aws_security_group" "service_security_group" {
-  vpc_id = aws_vpc.bars_vpc.id
+# ALB Security group
+resource "aws_security_group" "lb" {
+  name        = "${var.app_name}-${var.environment}-lb-sg"
+  vpc_id      = aws_vpc.bars_vpc.id
 
   ingress {
-    from_port       = 0
-    to_port         = 0
-    protocol        = "-1"
-    security_groups = [aws_security_group.load_balancer_security_group.id]
+    protocol    = "tcp"
+    from_port   = 8080
+    to_port     = 8080
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
-    from_port        = 0
-    to_port          = 0
-    protocol         = "-1"
-    cidr_blocks      = ["0.0.0.0/0"]
-    ipv6_cidr_blocks = ["::/0"]
+    protocol    = "-1"
+    from_port   = 0
+    to_port     = 0
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Traffic to the ECS Cluster should only come from the ALB
+# or AWS services through an AWS PrivateLink
+resource "aws_security_group" "ecs_tasks" {
+  name        = "${var.app_name}-${var.environment}-ecs-sg"
+  vpc_id      = aws_vpc.bars_vpc.id
+
+  ingress {
+    protocol    = "tcp"
+    from_port   = var.app_port
+    to_port     = var.app_port
+    cidr_blocks = [var.cidr]
   }
 
-  tags = merge(local.tags, { Name = "${var.app_name}-service-sg" })
+  ingress {
+    protocol        = "tcp"
+    from_port       = 443
+    to_port         = 443
+    cidr_blocks = [var.cidr]
+  }
+
+  egress {
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    prefix_list_ids = [
+      aws_vpc_endpoint.s3.prefix_list_id
+    ]
+  }
+
+  egress {
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    cidr_blocks = [var.cidr]
+  }
+
+  egress {
+    protocol    = "-1"
+    from_port   = 0
+    to_port     = 0
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
